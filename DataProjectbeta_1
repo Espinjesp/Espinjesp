@@ -1,0 +1,207 @@
+# Import required libraries 
+
+import pandas as pd 
+
+import numpy as np 
+
+import datetime 
+
+from sklearn.ensemble import RandomForestClassifier 
+
+from sklearn.model_selection import train_test_split, cross_val_score, StratifiedKFold 
+
+from sklearn.preprocessing import StandardScaler 
+
+from sklearn.feature_selection import SelectFromModel 
+
+from sklearn.metrics import accuracy_score, classification_report 
+
+ 
+
+# Data loading and preprocessing 
+
+def load_and_prepare_data(): 
+
+    # Load UFC data 
+
+    ufc_2023 = pd.read_csv('ufc_2023.csv') 
+
+    ufc_2024 = pd.read_csv('ufc_2024.csv') 
+
+     
+
+    # Combine datasets 
+
+    ufc_combined = pd.concat([ufc_2023, ufc_2024], ignore_index=True) 
+
+     
+
+    # Convert date column to datetime 
+
+    ufc_combined['date'] = pd.to_datetime(ufc_combined['date']) 
+
+     
+
+    # Filter for events on or after December 7, 2024 
+
+    target_date = datetime.datetime(2024, 12, 7) 
+
+    ufc_filtered = ufc_combined[ufc_combined['date'] >= target_date] 
+
+     
+
+    # Remove missing values and duplicates 
+
+    ufc_filtered = ufc_filtered.dropna(subset=['fighter1', 'fighter2', 'weight_class']) 
+
+    ufc_filtered = ufc_filtered.drop_duplicates() 
+
+     
+
+    return ufc_filtered.reset_index(drop=True) 
+
+ 
+
+# Feature engineering 
+
+def engineer_features(df): 
+
+    # Basic fight metrics 
+
+    df['striking_accuracy'] = df['significant_strikes_landed'] / df['significant_strikes_attempted'] 
+
+    df['takedown_accuracy'] = df['takedowns_landed'] / df['takedowns_attempted'] 
+
+    df['control_time_ratio'] = df['control_time'] / df['total_fight_time'] 
+
+     
+
+    # Performance metrics 
+
+    df['striking_efficiency'] = (df['significant_strikes_landed'] - df['significant_strikes_absorbed']) / df['total_fight_time'] 
+
+    df['grappling_efficiency'] = (df['takedowns_landed'] - df['takedowns_absorbed']) / df['total_fight_time'] 
+
+     
+
+    # Calculate xR and weighted features 
+
+    df['xR'] = calculate_xr(df) 
+
+    df['xR_weighted'] = df['xR'] * np.log1p(df['total_fights']) 
+
+     
+
+    # Normalize features 
+
+    scaler = StandardScaler() 
+
+    features_to_scale = ['striking_efficiency', 'grappling_efficiency', 'xR_weighted'] 
+
+    df[features_to_scale] = scaler.fit_transform(df[features_to_scale]) 
+
+     
+
+    return df 
+
+ 
+
+# Model training and evaluation 
+
+def train_model(X, y): 
+
+    # Split data 
+
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.33, random_state=42) 
+
+     
+
+    # Feature selection 
+
+    selector = SelectFromModel(RandomForestClassifier(random_state=42), prefit=False) 
+
+    X_train_selected = selector.fit_transform(X_train, y_train) 
+
+    X_test_selected = selector.transform(X_test) 
+
+     
+
+    # Initialize model with optimal parameters 
+
+    model = RandomForestClassifier( 
+
+        n_estimators=50, 
+
+        max_depth=5, 
+
+        min_samples_split=10, 
+
+        min_samples_leaf=5, 
+
+        random_state=42 
+
+    ) 
+
+     
+
+    # Train model 
+
+    model.fit(X_train_selected, y_train) 
+
+     
+
+    # Cross-validation 
+
+    cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42) 
+
+    cv_scores = cross_val_score(model, X_train_selected, y_train, cv=cv, scoring='accuracy') 
+
+     
+
+    # Evaluate model 
+
+    y_pred = model.predict(X_test_selected) 
+
+    accuracy = accuracy_score(y_test, y_pred) 
+
+     
+
+    return model, accuracy, cv_scores, selector 
+
+ 
+
+# Main execution 
+
+if __name__ == "__main__": 
+
+    # Load and prepare data 
+
+    ufc_data = load_and_prepare_data() 
+
+     
+
+    # Engineer features 
+
+    ufc_data = engineer_features(ufc_data) 
+
+     
+
+    # Prepare features and target 
+
+    X = ufc_data.drop(['target', 'date'], axis=1) 
+
+    y = ufc_data['target'] 
+
+     
+
+    # Train and evaluate model 
+
+    model, accuracy, cv_scores, selector = train_model(X, y) 
+
+     
+
+    # Print results 
+
+    print(f"Model Accuracy: {accuracy:.3f}") 
+
+    print(f"Mean CV Score: {cv_scores.mean():.3f} (+/- {cv_scores.std():.3f})") 
